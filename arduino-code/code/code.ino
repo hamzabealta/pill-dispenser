@@ -60,6 +60,8 @@ const long checkInterval = 61000;
 void loop() {
   unsigned long currentMillis = millis();
 
+  handleButton(currentMillis);
+
   if (currentMillis - lastCheck >= checkInterval) {
     lastCheck = currentMillis; 
 
@@ -127,86 +129,36 @@ void SysProvEvent(arduino_event_t *sys_event)
     }
 }
 
-void checkAndHandleDispensing() {
-    Serial.println(F("Entering checkAndHandleDispensing"));
+void handleButton(unsigned long currentMillis) {
+  static unsigned long buttonPressStartTime = 0; // When the current button press started
+  bool currentButtonState = digitalRead(BUTTON_PIN);
 
-    if (!timeClient.update()) {
-        Serial.println(F("Failed to update time from NTP server."));
-        return;
+  // Check for button press (rising edge)
+  if (currentButtonState && !buttonPreviouslyPressed) {
+    buttonPreviouslyPressed = true;
+    buttonPressStartTime = currentMillis;
+  }
+  
+  // Check for button release (falling edge)
+  if (!currentButtonState && buttonPreviouslyPressed) {
+    buttonPreviouslyPressed = false;
+    unsigned long pressDuration = currentMillis - buttonPressStartTime;
+
+    if (pressDuration >= longPressTime) {
+      Serial.println("Long press detected, reinitiating provisioning");
+      initiateBLEProvisioning();
     } else {
-        Serial.println(F("Time updated successfully from NTP server."));
-    }
-
-    // Getting the current time and day of the week
-    int currentHour = timeClient.getHours();
-    int currentMinute = timeClient.getMinutes();
-    int currentDayOfWeek = timeClient.getDay(); // Ensure this matches your server's day numbering
-
-    // Combine current hour and minute to a string
-    String currentTime = String(currentHour) + ":" + (currentMinute < 10 ? "0" : "") + String(currentMinute);
-    
-    Serial.print(F("Current Time: "));
-    Serial.println(currentTime);
-
-    // Load the schedule from preferences
-    String scheduleJson = preferences.getString("schedule", "");
-    if (scheduleJson == "") {
-        Serial.println(F("No schedule found in preferences."));
-        return;
-    } else {
-        Serial.println(F("Schedule loaded from preferences."));
-    }
-
-    Serial.println(scheduleJson);
-    
-    // Parse the JSON schedule
-    StaticJsonDocument<512> doc;
-    DeserializationError error = deserializeJson(doc, scheduleJson);
-    if (error) {
-      Serial.print(F("deserializeJson() failed: "));
-      Serial.println(error.c_str());
-      return;
-    } else {
-        Serial.println(F("JSON schedule parsed successfully."));
-    }
-
-    // Check if today is one of the scheduled days
-    JsonArray daysOfWeek = doc["daysOfWeek"];
-    bool isScheduledDay = false;
-    for (JsonVariant v : daysOfWeek) {
-        if (v.as<int>() == currentDayOfWeek) {
-            isScheduledDay = true;
-            break;
-        }
-    }
-
-    Serial.println(isScheduledDay ? F("Today is a scheduled day.") : F("Today is not a scheduled day."));
-    if (!isScheduledDay) {
+      // Short press logic
+      if (ledState) {
         digitalWrite(LED_PIN, LOW);
-        return;
+        ledState = false;
+        Serial.println("Pill dispensed.");
+      } else {
+        // Optionally, handle a short press when the LED is off, if needed
+      }
     }
-
-    // Check if the current time is one of the scheduled times
-    JsonArray times = doc["times"];
-    bool isScheduledTime = false;
-    for (JsonVariant v : times) {
-        if (v.as<String>() == currentTime) {
-            isScheduledTime = true;
-            break;
-        }
-    }
-
-    Serial.println(isScheduledTime ? F("Current time is a scheduled time.") : F("Current time is not a scheduled time."));
-    // Turn on or off the LED based on the schedule
-    if (isScheduledTime) {
-        digitalWrite(LED_PIN, HIGH);
-        Serial.println(F("LED turned ON based on schedule."));
-    } else {
-        digitalWrite(LED_PIN, LOW);
-        Serial.println(F("LED turned OFF as it's not a scheduled time."));
-    }
+  }
 }
-
 
 void pullScheduleFromServer() {
     HTTPClient http;
